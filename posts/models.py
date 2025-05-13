@@ -89,6 +89,8 @@ class Comment(models.Model):
     parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='replies')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    is_offensive = models.BooleanField(default=False)
+    hate_score = models.FloatField(null=True, blank=True)
 
     objects = CommentManager()
 

@@ -1,9 +1,12 @@
-from rest_framework import serializers, viewsets, permissions
+from rest_framework import serializers, viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 
+
 from accounts.api import UserSerializer
+from hate_speech_model.preprocessing import preprocess_text
+from hate_speech_model.utils.model_loader import load_model
 from .models import Post, PostMedia, Comment, Tag
 
 
@@ -85,7 +88,8 @@ class CommentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Comment
-        fields = ['id', 'user', 'content', 'parent', 'created_at', 'replies']
+        fields = ['id', 'user', 'content', 'parent', 'created_at', 'replies', 'is_offensive', 'hate_score']
+        read_only_fields = ['user', 'created_at', 'is_offensive', 'hate_score']
 
     def get_replies(self, obj):
         return CommentSerializer(obj.replies.all(), many=True).data
@@ -97,8 +101,60 @@ class CommentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # Only return comments for the given post.
-        return Comment.objects.filter(post_id=self.kwargs['post_pk'])
+        return Comment.objects.filter(
+            post_id=self.kwargs['post_pk'],
+            is_offensive=False
+        )
+
+    def create(self, request, *args, **kwargs):
+        # Get the associated post
+        post = Post.objects.get(pk=self.kwargs['post_pk'])
+
+        # Make a mutable copy of request data
+        data = request.data.copy()
+        data['user'] = request.user.id
+        data['post'] = post.id
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Hate speech detection
+        content = serializer.validated_data['content']
+        model, vectorizer = load_model()
+        cleaned_text = preprocess_text(content)
+        text_vec = vectorizer.transform([cleaned_text])
+        hate_prob = model.predict_proba(text_vec)[0][1]
+
+        # Moderate based on threshold
+        if hate_prob > 0.65:  # Block clearly hateful comments
+            return Response({
+                'detail': 'Comment violates community guidelines',
+                'hate_probability': hate_prob,
+                'threshold': 0.65
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # Save with moderation info
+        comment = serializer.save(
+            user=request.user,
+            post=post,
+            hate_score=hate_prob,
+            is_offensive=hate_prob > 0.65  # Auto-approve safe comments
+        )
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
 
     def perform_create(self, serializer):
         post = Post.objects.get(pk=self.kwargs['post_pk'])
         serializer.save(user=self.request.user, post=post)
+
+    def get_serializer_context(self):
+        # Add post_pk to context for hyperlinked relationships
+        context = super().get_serializer_context()
+        context['post_pk'] = self.kwargs['post_pk']
+        return context
+

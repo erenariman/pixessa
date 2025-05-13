@@ -1,0 +1,19 @@
+Model Evaluation Report
+==============================
+Accuracy: 0.9401
+ROC-AUC: 0.9795
+
+Classification Report:
+              precision    recall  f1-score   support
+
+      Normal       0.76      0.95      0.84       833
+ Hate Speech       0.99      0.94      0.96      4124
+
+    accuracy                           0.94      4957
+   macro avg       0.87      0.94      0.90      4957
+weighted avg       0.95      0.94      0.94      4957
+
+
+Confusion Matrix:
+[[ 791   42]
+ [ 255 3869]]
